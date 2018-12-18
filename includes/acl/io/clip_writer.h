@@ -47,7 +47,7 @@ namespace acl
 				uint64_t u64;
 				double dbl;
 
-				constexpr explicit DoubleToUInt64(double value) : dbl(value) {}
+				constexpr explicit DoubleToUInt64(double dbl_value) : dbl(dbl_value) {}
 			};
 
 			snprintf(buffer, buffer_size, "%" PRIX64, DoubleToUInt64(value).u64);
@@ -249,7 +249,9 @@ namespace acl
 			std::FILE* file = nullptr;
 
 #ifdef _WIN32
-			fopen_s(&file, acl_filename, "w");
+			char path[64 * 1024] = { 0 };
+			snprintf(path, get_array_size(path), "\\\\?\\%s", acl_filename);
+			fopen_s(&file, path, "w");
 #else
 			file = fopen(acl_filename, "w");
 #endif
