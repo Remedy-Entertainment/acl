@@ -34,24 +34,51 @@ namespace acl
 	// TODO: Get a higher precision number
 	constexpr float k_pi_32 = 3.141592654f;
 
+	inline int truncate(float input)
+	{
+#if defined(ACL_SSE2_INTRINSICS)
+		return _mm_cvtt_ss2si(_mm_set_ss(input));
+#else
+		return (int)std::truncf(input);
+#endif
+	}
+
 	inline float floor(float input)
 	{
+#if defined(ACL_SSE4_INTRINSICS)
+		return _mm_cvtss_f32(_mm_floor_ps(_mm_set_ss(input)));
+#else
 		return std::floor(input);
+#endif
 	}
 
 	inline float ceil(float input)
 	{
+#if defined(ACL_SSE4_INTRINSICS)
+		return _mm_cvtss_f32(_mm_ceil_ps(_mm_set_ss(input)));
+#else
 		return std::ceil(input);
+#endif
 	}
 
 	inline float clamp(float input, float min, float max)
 	{
+#if defined(ACL_SSE2_INTRINSICS)
+		return _mm_cvtss_f32(_mm_max_ss(_mm_set_ss(min), _mm_min_ss(_mm_set_ss(input), _mm_set_ss(max))));
+#else
 		return std::min(std::max(input, min), max);
+#endif
 	}
 
 	inline float abs(float input)
 	{
+#if defined(ACL_SSE2_INTRINSICS)
+		const __m128 input_v = _mm_set_ss(input);
+		const __m128 result = _mm_and_ps(input_v, _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff)));
+		return _mm_cvtss_f32(result);
+#else
 		return std::fabs(input);
+#endif
 	}
 
 	inline float sqrt(float input)
@@ -135,12 +162,20 @@ namespace acl
 
 	inline float min(float left, float right)
 	{
+#if defined(ACL_SSE2_INTRINSICS)
+		return _mm_cvtss_f32(_mm_min_ss(_mm_set_ss(left), _mm_set_ss(right)));
+#else
 		return std::min(left, right);
+#endif
 	}
 
 	inline float max(float left, float right)
 	{
+#if defined(ACL_SSE2_INTRINSICS)
+		return _mm_cvtss_f32(_mm_max_ss(_mm_set_ss(left), _mm_set_ss(right)));
+#else
 		return std::max(left, right);
+#endif
 	}
 
 	constexpr float deg2rad(float deg)
