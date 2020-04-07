@@ -24,17 +24,18 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/core/impl/compiler_utils.h"
 #include "acl/core/iallocator.h"
 #include "acl/core/error.h"
 
-#if defined(__APPLE__)
-#include <cstdlib>	// For posix_memalign
+#if defined(__APPLE__) || defined(__EMSCRIPTEN__)
+	#include <cstdlib>	// For posix_memalign
 #elif defined(_WIN32)
-#include <malloc.h>
+	#include <malloc.h>
 #endif
 
 #if defined(ACL_HAS_ASSERT_CHECKS) && !defined(ACL_NO_ALLOCATOR_TRACKING)
-#define ACL_ALLOCATOR_TRACK_NUM_ALLOCATIONS
+	#define ACL_ALLOCATOR_TRACK_NUM_ALLOCATIONS
 #endif
 
 // This is used for debugging memory leaks, double frees, etc.
@@ -42,12 +43,14 @@
 //#define ACL_ALLOCATOR_TRACK_ALL_ALLOCATIONS
 
 #if defined(ACL_ALLOCATOR_TRACK_NUM_ALLOCATIONS)
-#include <atomic>
+	#include <atomic>
 #endif
 
 #if defined(ACL_ALLOCATOR_TRACK_ALL_ALLOCATIONS)
-#include <unordered_map>
+	#include <unordered_map>
 #endif
+
+ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
@@ -110,7 +113,7 @@ namespace acl
 
 #if defined(_WIN32)
 			ptr = _aligned_malloc(aligned_size, alignment);
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) || defined(__EMSCRIPTEN__)
 			ptr = nullptr;
 			posix_memalign(&ptr, std::max<size_t>(alignment, sizeof(void*)), aligned_size);
 #elif defined(__ANDROID__)
@@ -189,3 +192,5 @@ namespace acl
 #endif
 	};
 }
+
+ACL_IMPL_FILE_PRAGMA_POP

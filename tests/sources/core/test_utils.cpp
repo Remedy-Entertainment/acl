@@ -25,18 +25,24 @@
 #include <catch.hpp>
 
 #include <acl/core/utils.h>
+#include <rtm/scalarf.h>
+
+#include <limits>
 
 using namespace acl;
+using namespace rtm;
 
 TEST_CASE("misc utils", "[core][utils]")
 {
-	REQUIRE(calculate_num_samples(0.0f, 30) == 1);
-	REQUIRE(calculate_num_samples(1.0f, 30) == 31);
-	REQUIRE(calculate_num_samples(1.0f, 24) == 25);
-	REQUIRE(calculate_num_samples(1.0f / 30.f, 30) == 2);
+	CHECK(calculate_num_samples(0.0F, 30.0F) == 0);
+	CHECK(calculate_num_samples(1.0F, 30.0F) == 31);
+	CHECK(calculate_num_samples(1.0F, 24.0F) == 25);
+	CHECK(calculate_num_samples(1.0F / 30.F, 30.0F) == 2);
+	CHECK(calculate_num_samples(std::numeric_limits<float>::infinity(), 30.0F) == 1);
 
-	REQUIRE(calculate_duration(1, 30) == 0.0f);
-	REQUIRE(calculate_duration(1, 8) == 0.0f);
-	REQUIRE(scalar_near_equal(calculate_duration(31, 30), 1.0f, 1.0e-8f));
-	REQUIRE(scalar_near_equal(calculate_duration(9, 8), 1.0f, 1.0e-8f));
+	CHECK(calculate_duration(0, 30.0F) == 0.0F);
+	CHECK(calculate_duration(1, 30.0F) == std::numeric_limits<float>::infinity());
+	CHECK(calculate_duration(1, 8.0F) == std::numeric_limits<float>::infinity());
+	CHECK(scalar_near_equal(calculate_duration(31, 30.0F), 1.0F, 1.0E-8F));
+	CHECK(scalar_near_equal(calculate_duration(9, 8.0F), 1.0F, 1.0E-8F));
 }

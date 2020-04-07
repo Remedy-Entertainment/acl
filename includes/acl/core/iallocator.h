@@ -26,11 +26,13 @@
 
 #include "acl/core/error.h"
 #include "acl/core/memory_utils.h"
-#include "acl/core/compiler_utils.h"
+#include "acl/core/impl/compiler_utils.h"
 
 #include <type_traits>
 #include <utility>
 #include <cstdint>
+
+ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
@@ -140,3 +142,5 @@ namespace acl
 		allocator.deallocate(elements, sizeof(AllocatedType) * num_elements);
 	}
 }
+
+ACL_IMPL_FILE_PRAGMA_POP

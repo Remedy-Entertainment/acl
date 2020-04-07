@@ -19,7 +19,7 @@ import sjson
 
 def parse_argv():
 	options = {}
-	options['acl'] = os.path.join(os.getcwd(), '../../test_data/decomp_data_v1')
+	options['acl'] = os.path.join(os.getcwd(), '../../test_data/decomp_data_v5')
 	options['stats'] = ""
 	options['csv'] = False
 	options['refresh'] = False
@@ -128,13 +128,6 @@ def get_decomp_categories():
 	categories.append(('forward_bone_warm', 'forward', 'bone', 'warm'))
 	categories.append(('backward_bone_warm', 'backward', 'bone', 'warm'))
 	categories.append(('random_bone_warm', 'random', 'bone', 'warm'))
-
-	categories.append(('forward_ue4_cold', 'forward', 'ue4', 'cold'))
-	categories.append(('backward_ue4_cold', 'backward', 'ue4', 'cold'))
-	categories.append(('random_ue4_cold', 'random', 'ue4', 'cold'))
-	categories.append(('forward_ue4_warm', 'forward', 'ue4', 'warm'))
-	categories.append(('backward_ue4_warm', 'backward', 'ue4', 'warm'))
-	categories.append(('random_ue4_warm', 'random', 'ue4', 'warm'))
 	return categories
 
 def create_csv(options):
@@ -170,8 +163,9 @@ def append_csv(csv_data, job_data):
 				(category, decomp_min, decomp_max, decomp_avg) = stats
 				print('{}, {}, {}, {}'.format(clip_name, decomp_min, decomp_max, decomp_avg), file = csv_file)
 
-def print_progress(iteration, total, prefix='', suffix='', decimals = 1, bar_length = 50):
+def print_progress(iteration, total, prefix='', suffix='', decimals = 1, bar_length = 40):
 	# Taken from https://stackoverflow.com/questions/3173320/text-progress-bar-in-the-console
+	# With minor tweaks
 	"""
 	Call in a loop to create terminal progress bar
 	@params:
@@ -187,16 +181,17 @@ def print_progress(iteration, total, prefix='', suffix='', decimals = 1, bar_len
 	filled_length = int(round(bar_length * iteration / float(total)))
 	bar = '█' * filled_length + '-' * (bar_length - filled_length)
 
-	if platform.system() == 'Darwin':
-		# On OS X, \r doesn't appear to work properly in the terminal
-		print('{}{} |{}| {}{} {}'.format('\b' * 100, prefix, bar, percents, '%', suffix), end='')
-	else:
-		sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percents, '%', suffix)),
+	# We need to clear any previous line we might have to ensure we have no visual artifacts
+	# Note that if this function is called too quickly, the text might flicker
+	terminal_width = 80
+	sys.stdout.write('{}\r'.format(' ' * terminal_width))
+	sys.stdout.flush()
+
+	sys.stdout.write('%s |%s| %s%s %s\r' % (prefix, bar, percents, '%', suffix)),
+	sys.stdout.flush()
 
 	if iteration == total:
-		print('')
-
-	sys.stdout.flush()
+		sys.stdout.write('\n')
 
 def run_acl_decompressor(cmd_queue, result_queue):
 	while True:
@@ -316,7 +311,7 @@ def decompress_clips(options):
 			cmd_queue.put(None)
 
 		result_queue = queue.Queue()
-		decompression_start_time = time.clock()
+		decompression_start_time = time.perf_counter()
 
 		threads = [ threading.Thread(target = run_acl_decompressor, args = (cmd_queue, result_queue)) for _i in range(options['num_threads']) ]
 		for thread in threads:
@@ -342,7 +337,7 @@ def decompress_clips(options):
 		except KeyboardInterrupt:
 			sys.exit(1)
 
-		decompression_end_time = time.clock()
+		decompression_end_time = time.perf_counter()
 		print()
 		print('Compressed {} clips in {}'.format(len(stat_files), format_elapsed_time(decompression_end_time - decompression_start_time)))
 
@@ -416,6 +411,10 @@ def set_process_affinity(affinity):
 		p.cpu_affinity([affinity])
 
 if __name__ == "__main__":
+	if sys.version_info < (3, 4):
+		print('Python 3.4 or higher needed to run this script')
+		sys.exit(1)
+
 	options = parse_argv()
 
 	# Set the affinity to core 0, on platforms that support it, core 2 will be used to decompress
@@ -428,7 +427,7 @@ if __name__ == "__main__":
 
 	csv_data = create_csv(options)
 
-	aggregating_start_time = time.clock()
+	aggregating_start_time = time.perf_counter()
 
 	stat_queue = multiprocessing.Queue()
 	for stat_filename in stat_files:
@@ -470,7 +469,7 @@ if __name__ == "__main__":
 
 	num_runs = agg_job_results['num_runs']
 
-	aggregating_end_time = time.clock()
+	aggregating_end_time = time.perf_counter()
 	print()
 	print('Found {} runs in {}'.format(num_runs, format_elapsed_time(aggregating_end_time - aggregating_start_time)))
 	print()

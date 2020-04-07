@@ -27,6 +27,7 @@
 #include <acl/math/quat_packing.h>
 
 using namespace acl;
+using namespace rtm;
 
 TEST_CASE("quat packing math", "[math][quat][packing]")
 {
@@ -38,56 +39,52 @@ TEST_CASE("quat packing math", "[math][quat][packing]")
 	};
 	static_assert((offsetof(UnalignedBuffer, buffer) % 2) == 0, "Minimum packing alignment is 2");
 
-	const Quat_32 quat0 = quat_set(0.39564531008956383f, 0.044254239301713752f, 0.22768840967675355f, 0.88863059760894492f);
+	const quatf quat0 = quat_set(0.39564531008956383F, 0.044254239301713752F, 0.22768840967675355F, 0.88863059760894492F);
 
 	{
 		UnalignedBuffer tmp0;
 		pack_quat_128(quat0, &tmp0.buffer[0]);
-		Quat_32 quat1 = unpack_quat_128(&tmp0.buffer[0]);
-		REQUIRE(quat_get_x(quat0) == quat_get_x(quat1));
-		REQUIRE(quat_get_y(quat0) == quat_get_y(quat1));
-		REQUIRE(quat_get_z(quat0) == quat_get_z(quat1));
-		REQUIRE(quat_get_w(quat0) == quat_get_w(quat1));
+		quatf quat1 = unpack_quat_128(&tmp0.buffer[0]);
+		CHECK(quat_get_x(quat0) == quat_get_x(quat1));
+		CHECK(quat_get_y(quat0) == quat_get_y(quat1));
+		CHECK(quat_get_z(quat0) == quat_get_z(quat1));
+		CHECK(quat_get_w(quat0) == quat_get_w(quat1));
 	}
 
 	{
 		UnalignedBuffer tmp0;
 		pack_quat_96(quat0, &tmp0.buffer[0]);
-		Quat_32 quat1 = unpack_quat_96_unsafe(&tmp0.buffer[0]);
-		REQUIRE(quat_get_x(quat0) == quat_get_x(quat1));
-		REQUIRE(quat_get_y(quat0) == quat_get_y(quat1));
-		REQUIRE(quat_get_z(quat0) == quat_get_z(quat1));
-		REQUIRE(scalar_near_equal(quat_get_w(quat0), quat_get_w(quat1), 1.0e-4f));
+		quatf quat1 = unpack_quat_96_unsafe(&tmp0.buffer[0]);
+		CHECK(quat_get_x(quat0) == quat_get_x(quat1));
+		CHECK(quat_get_y(quat0) == quat_get_y(quat1));
+		CHECK(quat_get_z(quat0) == quat_get_z(quat1));
+		CHECK(scalar_near_equal(quat_get_w(quat0), quat_get_w(quat1), 1.0E-4F));
 	}
 
 	{
 		UnalignedBuffer tmp0;
 		pack_quat_48(quat0, &tmp0.buffer[0]);
-		Quat_32 quat1 = unpack_quat_48(&tmp0.buffer[0]);
-		REQUIRE(scalar_near_equal(quat_get_x(quat0), quat_get_x(quat1), 1.0e-4f));
-		REQUIRE(scalar_near_equal(quat_get_y(quat0), quat_get_y(quat1), 1.0e-4f));
-		REQUIRE(scalar_near_equal(quat_get_z(quat0), quat_get_z(quat1), 1.0e-4f));
-		REQUIRE(scalar_near_equal(quat_get_w(quat0), quat_get_w(quat1), 1.0e-4f));
+		quatf quat1 = unpack_quat_48(&tmp0.buffer[0]);
+		CHECK(scalar_near_equal(quat_get_x(quat0), quat_get_x(quat1), 1.0E-4F));
+		CHECK(scalar_near_equal(quat_get_y(quat0), quat_get_y(quat1), 1.0E-4F));
+		CHECK(scalar_near_equal(quat_get_z(quat0), quat_get_z(quat1), 1.0E-4F));
+		CHECK(scalar_near_equal(quat_get_w(quat0), quat_get_w(quat1), 1.0E-4F));
 	}
 
 	{
 		UnalignedBuffer tmp0;
 		pack_quat_32(quat0, &tmp0.buffer[0]);
-		Quat_32 quat1 = unpack_quat_32(&tmp0.buffer[0]);
-		REQUIRE(scalar_near_equal(quat_get_x(quat0), quat_get_x(quat1), 1.0e-3f));
-		REQUIRE(scalar_near_equal(quat_get_y(quat0), quat_get_y(quat1), 1.0e-3f));
-		REQUIRE(scalar_near_equal(quat_get_z(quat0), quat_get_z(quat1), 1.0e-3f));
-		REQUIRE(scalar_near_equal(quat_get_w(quat0), quat_get_w(quat1), 1.0e-3f));
+		quatf quat1 = unpack_quat_32(&tmp0.buffer[0]);
+		CHECK(scalar_near_equal(quat_get_x(quat0), quat_get_x(quat1), 1.0E-3F));
+		CHECK(scalar_near_equal(quat_get_y(quat0), quat_get_y(quat1), 1.0E-3F));
+		CHECK(scalar_near_equal(quat_get_z(quat0), quat_get_z(quat1), 1.0E-3F));
+		CHECK(scalar_near_equal(quat_get_w(quat0), quat_get_w(quat1), 1.0E-3F));
 	}
 
-	REQUIRE(get_packed_rotation_size(RotationFormat8::Quat_128) == 16);
-	REQUIRE(get_packed_rotation_size(RotationFormat8::QuatDropW_96) == 12);
-	REQUIRE(get_packed_rotation_size(RotationFormat8::QuatDropW_48) == 6);
-	REQUIRE(get_packed_rotation_size(RotationFormat8::QuatDropW_32) == 4);
+	CHECK(get_packed_rotation_size(rotation_format8::quatf_full) == 16);
+	CHECK(get_packed_rotation_size(rotation_format8::quatf_drop_w_full) == 12);
 
-	REQUIRE(get_range_reduction_rotation_size(RotationFormat8::Quat_128) == 32);
-	REQUIRE(get_range_reduction_rotation_size(RotationFormat8::QuatDropW_96) == 24);
-	REQUIRE(get_range_reduction_rotation_size(RotationFormat8::QuatDropW_48) == 24);
-	REQUIRE(get_range_reduction_rotation_size(RotationFormat8::QuatDropW_32) == 24);
-	REQUIRE(get_range_reduction_rotation_size(RotationFormat8::QuatDropW_Variable) == 24);
+	CHECK(get_range_reduction_rotation_size(rotation_format8::quatf_full) == 32);
+	CHECK(get_range_reduction_rotation_size(rotation_format8::quatf_drop_w_full) == 24);
+	CHECK(get_range_reduction_rotation_size(rotation_format8::quatf_drop_w_variable) == 24);
 }

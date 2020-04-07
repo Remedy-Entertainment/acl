@@ -4,6 +4,8 @@ project(acl_unit_tests CXX)
 set(CMAKE_CXX_STANDARD 11)
 
 include_directories("${PROJECT_SOURCE_DIR}/../../includes")
+include_directories("${PROJECT_SOURCE_DIR}/../../external/rtm/includes")
+include_directories("${PROJECT_SOURCE_DIR}/../../external/sjson-cpp/includes")
 include_directories("${PROJECT_SOURCE_DIR}/../../external/catch2/single_include/catch2")
 
 # Grab all of our test source files
@@ -28,7 +30,18 @@ ParseAndAddCatchTests(${PROJECT_NAME})
 
 setup_default_compiler_flags(${PROJECT_NAME})
 
+if(MSVC)
+	if(CPU_INSTRUCTION_SET MATCHES "arm64")
+		# Exceptions are not enabled by default for ARM targets, enable them
+		target_compile_options(${PROJECT_NAME} PRIVATE /EHsc)
+	endif()
+endif()
+
 # Throw on failure to allow us to catch them and recover
 add_definitions(-DACL_ON_ASSERT_THROW)
+add_definitions(-DRTM_ON_ASSERT_THROW)
+add_definitions(-DSJSON_CPP_ON_ASSERT_THROW)
+
+add_definitions(-DACL_USE_SJSON)
 
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)

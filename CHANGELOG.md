@@ -1,5 +1,27 @@
 # Significant changes per release
 
+## 1.3.0
+
+*  Added support for VS2019, GCC 9, clang7, and Xcode 11
+*  Updated sjson-cpp and added a dependency on Realtime Math (RTM)
+*  Optimized compression and decompression significantly
+*  Added support for multiple root bones
+*  Added support for scalar track compression
+*  Many bug fixes and improvements
+
+## 1.2.1
+
+*  Silence SSE floating point exceptions during compression
+*  Minor fixes
+
+## 1.2.0
+
+*  Added support for GCC 8, clang 6, Xcode 10, and Windows ARM64
+*  Updated catch2 and sjson-cpp
+*  Integrated SonarCloud
+*  Added a compression level setting and changed default to *Medium*
+*  Various bug fixes, minor optimizations, and cleanup
+
 ## 1.1.0
 
 *  Added proper ARM NEON support

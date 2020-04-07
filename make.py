@@ -1,7 +1,11 @@
+# coding: utf-8
+
+from __future__ import print_function
+
 import argparse
+import multiprocessing
 import os
 import platform
-import queue
 import shutil
 import subprocess
 import sys
@@ -9,9 +13,9 @@ import threading
 import time
 import zipfile
 
-# The current test data version in used
-current_test_data = 'test_data_v1'
-current_decomp_data = 'decomp_data_v2'
+# The current test/decompression data version in use
+current_test_data = 'test_data_v3'
+current_decomp_data = 'decomp_data_v5'
 
 def parse_argv():
 	parser = argparse.ArgumentParser(add_help=False)
@@ -23,19 +27,26 @@ def parse_argv():
 	actions.add_argument('-regression_test', action='store_true')
 
 	target = parser.add_argument_group(title='Target')
-	target.add_argument('-compiler', choices=['vs2015', 'vs2017', 'android', 'clang4', 'clang5', 'clang6', 'gcc5', 'gcc6', 'gcc7', 'gcc8', 'osx', 'ios'], help='Defaults to the host system\'s default compiler')
+	target.add_argument('-compiler', choices=['vs2015', 'vs2017', 'vs2019', 'vs2019-clang', 'android', 'clang4', 'clang5', 'clang6', 'clang7', 'clang8', 'clang9', 'gcc5', 'gcc6', 'gcc7', 'gcc8', 'gcc9', 'osx', 'ios'], help='Defaults to the host system\'s default compiler')
 	target.add_argument('-config', choices=['Debug', 'Release'], type=str.capitalize)
-	target.add_argument('-cpu', choices=['x86', 'x64'], help='Only supported for Windows, OS X, and Linux; defaults to the host system\'s architecture')
+	target.add_argument('-cpu', choices=['x86', 'x64', 'armv7', 'arm64'], help='Defaults to the host system\'s architecture')
 
 	misc = parser.add_argument_group(title='Miscellaneous')
 	misc.add_argument('-avx', dest='use_avx', action='store_true', help='Compile using AVX instructions on Windows, OS X, and Linux')
 	misc.add_argument('-pop', dest='use_popcnt', action='store_true', help='Compile using the POPCNT instruction')
 	misc.add_argument('-nosimd', dest='use_simd', action='store_false', help='Compile without SIMD instructions')
+	misc.add_argument('-nosjson', dest='use_sjson', action='store_false', help='Compile without SJSON support')
 	misc.add_argument('-num_threads', help='No. to use while compiling and regressing')
 	misc.add_argument('-tests_matching', help='Only run tests whose names match this regex')
 	misc.add_argument('-help', action='help', help='Display this usage information')
 
-	parser.set_defaults(build=False, clean=False, unit_test=False, regression_test=False, compiler=None, config='Release', cpu='x64', use_avx=False, use_popcnt=False, use_simd=True, num_threads=4, tests_matching='')
+	num_threads = multiprocessing.cpu_count()
+	if platform.system() == 'Linux' and sys.version_info >= (3, 4):
+		num_threads = len(os.sched_getaffinity(0))
+	if not num_threads or num_threads == 0:
+		num_threads = 4
+
+	parser.set_defaults(build=False, clean=False, unit_test=False, regression_test=False, compiler=None, config='Release', cpu=None, use_avx=False, use_popcnt=False, use_simd=True, use_sjson=True, num_threads=num_threads, tests_matching='')
 
 	args = parser.parse_args()
 
@@ -45,7 +56,8 @@ def parse_argv():
 		args.use_avx = False
 
 	if args.compiler == 'android':
-		args.cpu = 'armv7-a'
+		if not args.cpu:
+			args.cpu = 'arm64'
 
 		if not platform.system() == 'Windows':
 			print('Android is only supported on Windows')
@@ -55,12 +67,12 @@ def parse_argv():
 			print('AVX is not supported on Android')
 			sys.exit(1)
 
-		if args.unit_test:
-			print('Unit tests cannot run from the command line on Android')
+		if not args.cpu in ['armv7', 'arm64']:
+			print('{} cpu architecture not in supported list [armv7, arm64] for Android'.format(args.cpu))
 			sys.exit(1)
-
-	if args.compiler == 'ios':
-		args.cpu = 'arm64'
+	elif args.compiler == 'ios':
+		if not args.cpu:
+			args.cpu = 'arm64'
 
 		if not platform.system() == 'Darwin':
 			print('iOS is only supported on OS X')
@@ -72,6 +84,28 @@ def parse_argv():
 
 		if args.unit_test:
 			print('Unit tests cannot run from the command line on iOS')
+			sys.exit(1)
+
+		if not args.cpu in ['arm64']:
+			print('{} cpu architecture not in supported list [arm64] for iOS'.format(args.cpu))
+			sys.exit(1)
+	else:
+		if not args.cpu:
+			args.cpu = 'x64'
+
+	if args.cpu == 'arm64':
+		if not args.compiler in ['vs2017', 'vs2019', 'ios', 'android']:
+			print('arm64 is only supported with VS2017, VS2019, Android, and iOS')
+			sys.exit(1)
+	elif args.cpu == 'armv7':
+		if not args.compiler == 'android':
+			print('armv7 is only supported with Android')
+			sys.exit(1)
+
+	if platform.system() == 'Darwin' and args.cpu == 'x86':
+		result = subprocess.check_output(['xcodebuild', '-version']).decode("utf-8")
+		if 'Xcode 11' in result:
+			print('Versions of Xcode 11 and up no longer support x86')
 			sys.exit(1)
 
 	return args
@@ -90,15 +124,22 @@ def get_generator(compiler, cpu):
 		if compiler == 'vs2015':
 			if cpu == 'x86':
 				return 'Visual Studio 14'
-			else:
+			elif cpu == 'x64':
 				return 'Visual Studio 14 Win64'
 		elif compiler == 'vs2017':
 			if cpu == 'x86':
 				return 'Visual Studio 15'
-			else:
+			elif cpu == 'x64':
 				return 'Visual Studio 15 Win64'
+			elif cpu == 'arm64':
+				# VS2017 ARM/ARM64 support only works with cmake 3.13 and up and the architecture must be specified with
+				# the -A cmake switch
+				return 'Visual Studio 15 2017'
+		elif compiler == 'vs2019' or compiler == 'vs2019-clang':
+			return 'Visual Studio 16 2019'
 		elif compiler == 'android':
-			return 'Visual Studio 14'
+			# For Android, we use the default generator since we don't build with CMake
+			return None
 	elif platform.system() == 'Darwin':
 		if compiler == 'osx' or compiler == 'ios':
 			return 'Xcode'
@@ -109,11 +150,28 @@ def get_generator(compiler, cpu):
 	print('See help with: python make.py -help')
 	sys.exit(1)
 
-def get_toolchain(compiler):
+def get_architecture(compiler, cpu):
+	if compiler == None:
+		return None
+
+	if platform.system() == 'Windows':
+		if compiler == 'vs2017':
+			if cpu == 'arm64':
+				return 'ARM64'
+		elif compiler == 'vs2019' or compiler == 'vs2019-clang':
+			if cpu == 'x86':
+				return 'Win32'
+			else:
+				return cpu
+
+	# This compiler/cpu pair does not need the architecture switch
+	return None
+
+def get_toolchain(compiler, cmake_script_dir):
 	if platform.system() == 'Windows' and compiler == 'android':
-		return 'Toolchain-Android.cmake'
+		return os.path.join(cmake_script_dir, 'Toolchain-Android.cmake')
 	elif platform.system() == 'Darwin' and compiler == 'ios':
-		return 'Toolchain-iOS.cmake'
+		return os.path.join(cmake_script_dir, 'Toolchain-iOS.cmake')
 
 	# No toolchain
 	return None
@@ -130,6 +188,15 @@ def set_compiler_env(compiler, args):
 		elif compiler == 'clang6':
 			os.environ['CC'] = 'clang-6.0'
 			os.environ['CXX'] = 'clang++-6.0'
+		elif compiler == 'clang7':
+			os.environ['CC'] = 'clang-7'
+			os.environ['CXX'] = 'clang++-7'
+		elif compiler == 'clang8':
+			os.environ['CC'] = 'clang-8'
+			os.environ['CXX'] = 'clang++-8'
+		elif compiler == 'clang9':
+			os.environ['CC'] = 'clang-9'
+			os.environ['CXX'] = 'clang++-9'
 		elif compiler == 'gcc5':
 			os.environ['CC'] = 'gcc-5'
 			os.environ['CXX'] = 'g++-5'
@@ -142,6 +209,9 @@ def set_compiler_env(compiler, args):
 		elif compiler == 'gcc8':
 			os.environ['CC'] = 'gcc-8'
 			os.environ['CXX'] = 'g++-8'
+		elif compiler == 'gcc9':
+			os.environ['CC'] = 'gcc-9'
+			os.environ['CXX'] = 'g++-9'
 		else:
 			print('Unknown compiler: {}'.format(compiler))
 			print('See help with: python make.py -help')
@@ -152,12 +222,11 @@ def do_generate_solution(cmake_exe, build_dir, cmake_script_dir, test_data_dir, 
 	cpu = args.cpu
 	config = args.config
 
-	if not compiler == None:
+	if compiler:
 		set_compiler_env(compiler, args)
 
 	extra_switches = ['--no-warn-unused-cli']
-	if not platform.system() == 'Windows':
-		extra_switches.append('-DCPU_INSTRUCTION_SET:STRING={}'.format(cpu))
+	extra_switches.append('-DCPU_INSTRUCTION_SET:STRING={}'.format(cpu))
 
 	if args.use_avx:
 		print('Enabling AVX usage')
@@ -171,12 +240,21 @@ def do_generate_solution(cmake_exe, build_dir, cmake_script_dir, test_data_dir, 
 		print('Disabling SIMD instruction usage')
 		extra_switches.append('-DUSE_SIMD_INSTRUCTIONS:BOOL=false')
 
+	if not args.use_sjson:
+		print('Disabling SJSON support')
+		extra_switches.append('-DUSE_SJSON:BOOL=false')
+
 	if not platform.system() == 'Windows' and not platform.system() == 'Darwin':
 		extra_switches.append('-DCMAKE_BUILD_TYPE={}'.format(config.upper()))
 
-	toolchain = get_toolchain(compiler)
-	if not toolchain == None:
-		extra_switches.append('-DCMAKE_TOOLCHAIN_FILE="{}"'.format(os.path.join(cmake_script_dir, toolchain)))
+	toolchain = get_toolchain(compiler, cmake_script_dir)
+	if toolchain:
+		extra_switches.append('-DCMAKE_TOOLCHAIN_FILE={}'.format(toolchain))
+
+	generator_suffix = ''
+	if compiler == 'vs2019-clang':
+		extra_switches.append('-T ClangCL')
+		generator_suffix = 'Clang CL'
 
 	if test_data_dir:
 		extra_switches.append('-DTEST_DATA_DIR:STRING="{}"'.format(test_data_dir))
@@ -188,11 +266,16 @@ def do_generate_solution(cmake_exe, build_dir, cmake_script_dir, test_data_dir, 
 	print('Generating build files ...')
 	cmake_cmd = '"{}" .. -DCMAKE_INSTALL_PREFIX="{}" {}'.format(cmake_exe, build_dir, ' '.join(extra_switches))
 	cmake_generator = get_generator(compiler, cpu)
-	if cmake_generator == None:
+	if not cmake_generator:
 		print('Using default generator')
 	else:
-		print('Using generator: {}'.format(cmake_generator))
+		print('Using generator: {} {}'.format(cmake_generator, generator_suffix))
 		cmake_cmd += ' -G "{}"'.format(cmake_generator)
+
+	cmake_arch = get_architecture(compiler, cpu)
+	if cmake_arch:
+		print('Using architecture: {}'.format(cmake_arch))
+		cmake_cmd += ' -A {}'.format(cmake_arch)
 
 	result = subprocess.call(cmake_cmd, shell=True)
 	if result != 0:
@@ -220,10 +303,37 @@ def do_build(cmake_exe, args):
 	if result != 0:
 		sys.exit(result)
 
-def do_tests(ctest_exe, args):
-	print('Running unit tests ...')
+def do_tests_android(build_dir, args):
+	# Switch our working directory to where we built everything
+	working_dir = os.path.join(build_dir, 'tests', 'main_android')
+	os.chdir(working_dir)
 
-	ctest_cmd = '"{}" --output-on-failure'.format(ctest_exe)
+	gradlew_exe = os.path.join(working_dir, 'gradlew.bat')
+
+	# We uninstall first and then install
+	if args.config == 'Debug':
+		install_cmd = 'uninstallAll installDebug'
+	elif args.config == 'Release':
+		install_cmd = 'uninstallAll installRelease'
+
+	# Install our app
+	test_cmd = '"{}" {}'.format(gradlew_exe, install_cmd)
+	result = subprocess.call(test_cmd, shell=True)
+	if result != 0:
+		sys.exit(result)
+
+	# Execute through ADB
+	run_cmd = 'adb shell am start -n "com.acl.unit_tests/com.acl.unit_tests.MainActivity" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER'
+	result = subprocess.call(run_cmd, shell=True)
+	if result != 0:
+		sys.exit(result)
+
+	# Restore working directory
+	os.chdir(build_dir)
+
+def do_tests_cmake(ctest_exe, args):
+	ctest_cmd = '"{}" --output-on-failure --parallel {}'.format(ctest_exe, args.num_threads)
+
 	if platform.system() == 'Windows' or platform.system() == 'Darwin':
 		ctest_cmd += ' -C {}'.format(args.config)
 	if args.tests_matching:
@@ -233,13 +343,22 @@ def do_tests(ctest_exe, args):
 	if result != 0:
 		sys.exit(result)
 
+def do_tests(build_dir, ctest_exe, args):
+	print('Running unit tests ...')
+
+	if args.compiler == 'android':
+		do_tests_android(build_dir, args)
+	else:
+		do_tests_cmake(ctest_exe, args)
+
 def format_elapsed_time(elapsed_time):
 	hours, rem = divmod(elapsed_time, 3600)
 	minutes, seconds = divmod(rem, 60)
 	return '{:0>2}h {:0>2}m {:05.2f}s'.format(int(hours), int(minutes), seconds)
 
-def print_progress(iteration, total, prefix='', suffix='', decimals = 1, bar_length = 50):
+def print_progress(iteration, total, prefix='', suffix='', decimals = 1, bar_length = 40):
 	# Taken from https://stackoverflow.com/questions/3173320/text-progress-bar-in-the-console
+	# With minor tweaks
 	"""
 	Call in a loop to create terminal progress bar
 	@params:
@@ -255,16 +374,17 @@ def print_progress(iteration, total, prefix='', suffix='', decimals = 1, bar_len
 	filled_length = int(round(bar_length * iteration / float(total)))
 	bar = '█' * filled_length + '-' * (bar_length - filled_length)
 
-	if platform.system() == 'Darwin':
-		# On OS X, \r doesn't appear to work properly in the terminal
-		print('{}{} |{}| {}{} {}'.format('\b' * 100, prefix, bar, percents, '%', suffix), end='')
-	else:
-		sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percents, '%', suffix)),
+	# We need to clear any previous line we might have to ensure we have no visual artifacts
+	# Note that if this function is called too quickly, the text might flicker
+	terminal_width = 80
+	sys.stdout.write('{}\r'.format(' ' * terminal_width))
+	sys.stdout.flush()
+
+	sys.stdout.write('%s |%s| %s%s %s\r' % (prefix, bar, percents, '%', suffix)),
+	sys.stdout.flush()
 
 	if iteration == total:
-		print('')
-
-	sys.stdout.flush()
+		sys.stdout.write('\n')
 
 def do_prepare_regression_test_data(test_data_dir, args):
 	print('Preparing regression test data ...')
@@ -318,24 +438,24 @@ def do_prepare_regression_test_data(test_data_dir, args):
 
 	print('Found {} regression configurations'.format(len(test_configs)))
 
-	if needs_decompression:
-		# Sort the configs by name for consistency
-		test_configs.sort(key=lambda entry: entry[1])
+	# Sort the configs by name for consistency
+	test_configs.sort(key=lambda entry: entry[1])
 
-		# Sort clips by size to test larger clips first, it parallelizes better
-		regression_clips.sort(key=lambda entry: entry[1], reverse=True)
+	# Sort clips by size to test larger clips first, it parallelizes better
+	regression_clips.sort(key=lambda entry: entry[1], reverse=True)
 
-		with open(os.path.join(current_test_data_dir, 'metadata.sjson'), 'w') as metadata_file:
-			print('configs = [', file = metadata_file)
-			for config_filename, _ in test_configs:
-				print('\t"{}"'.format(os.path.relpath(config_filename, test_config_dir)), file = metadata_file)
-			print(']', file = metadata_file)
-			print('', file = metadata_file)
-			print('clips = [', file = metadata_file)
-			for clip_filename, _ in regression_clips:
-				print('\t"{}"'.format(os.path.relpath(clip_filename, current_test_data_dir)), file = metadata_file)
-			print(']', file = metadata_file)
-			print('', file = metadata_file)
+	# Write our metadata file
+	with open(os.path.join(current_test_data_dir, 'metadata.sjson'), 'w') as metadata_file:
+		print('configs = [', file = metadata_file)
+		for config_filename, _ in test_configs:
+			print('\t"{}"'.format(os.path.relpath(config_filename, test_config_dir)), file = metadata_file)
+		print(']', file = metadata_file)
+		print('', file = metadata_file)
+		print('clips = [', file = metadata_file)
+		for clip_filename, _ in regression_clips:
+			print('\t"{}"'.format(os.path.relpath(clip_filename, current_test_data_dir)), file = metadata_file)
+		print(']', file = metadata_file)
+		print('', file = metadata_file)
 
 	return current_test_data_dir
 
@@ -382,7 +502,7 @@ def do_prepare_decompression_test_data(test_data_dir, args):
 				if not filename.endswith('.config.sjson'):
 					continue
 
-				if not filename == 'uniformly_sampled_quant_var_2.config.sjson':
+				if not filename == 'uniformly_sampled_quant_medium.config.sjson':
 					continue
 
 				config_filename = os.path.join(dirpath, filename)
@@ -394,23 +514,55 @@ def do_prepare_decompression_test_data(test_data_dir, args):
 
 	print('Found {} decompression configurations'.format(len(configs)))
 
-	if needs_decompression:
-		with open(os.path.join(current_data_dir, 'metadata.sjson'), 'w') as metadata_file:
-			print('configs = [', file = metadata_file)
-			for config_filename in configs:
-				print('\t"{}"'.format(os.path.relpath(config_filename, config_dir)), file = metadata_file)
-			print(']', file = metadata_file)
-			print('', file = metadata_file)
-			print('clips = [', file = metadata_file)
-			for clip_filename in clips:
-				print('\t"{}"'.format(os.path.relpath(clip_filename, current_data_dir)), file = metadata_file)
-			print(']', file = metadata_file)
-			print('', file = metadata_file)
+	# Write our metadata file
+	with open(os.path.join(current_data_dir, 'metadata.sjson'), 'w') as metadata_file:
+		print('configs = [', file = metadata_file)
+		for config_filename in configs:
+			print('\t"{}"'.format(os.path.relpath(config_filename, config_dir)), file = metadata_file)
+		print(']', file = metadata_file)
+		print('', file = metadata_file)
+		print('clips = [', file = metadata_file)
+		for clip_filename in clips:
+			print('\t"{}"'.format(os.path.relpath(clip_filename, current_data_dir)), file = metadata_file)
+		print(']', file = metadata_file)
+		print('', file = metadata_file)
 
 	return current_data_dir
 
-def do_regression_tests(ctest_exe, test_data_dir, args):
-	print('Running regression tests ...')
+def do_regression_tests_android(build_dir, args):
+	# Switch our working directory to where we built everything
+	working_dir = os.path.join(build_dir, 'tools', 'regression_tester_android')
+	os.chdir(working_dir)
+
+	gradlew_exe = os.path.join(working_dir, 'gradlew.bat')
+
+	# We uninstall first and then install
+	if args.config == 'Debug':
+		install_cmd = 'uninstallAll installDebug'
+	elif args.config == 'Release':
+		install_cmd = 'uninstallAll installRelease'
+
+	# Install our app
+	test_cmd = '"{}" {}'.format(gradlew_exe, install_cmd)
+	result = subprocess.call(test_cmd, shell=True)
+	if result != 0:
+		sys.exit(result)
+
+	# Execute through ADB
+	run_cmd = 'adb shell am start -n "com.acl.regression_tests/com.acl.regression_tests.MainActivity" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER'
+	result = subprocess.call(run_cmd, shell=True)
+	if result != 0:
+		sys.exit(result)
+
+	# Restore working directory
+	os.chdir(build_dir)
+
+def do_regression_tests_cmake(ctest_exe, test_data_dir, args):
+	if sys.version_info < (3, 4):
+		print('Python 3.4 or higher needed to run regression tests')
+		sys.exit(1)
+
+	import queue
 
 	# Validate that our regression testing tool is present
 	if platform.system() == 'Windows':
@@ -455,14 +607,14 @@ def do_regression_tests(ctest_exe, test_data_dir, args):
 	# Iterate over every clip and configuration and perform the regression testing
 	for config_filename, _ in test_configs:
 		print('Performing regression tests for configuration: {}'.format(os.path.basename(config_filename)))
-		regression_start_time = time.clock()
+		regression_start_time = time.perf_counter()
 
 		cmd_queue = queue.Queue()
 		completed_queue = queue.Queue()
 		failed_queue = queue.Queue()
 		failure_lock = threading.Lock()
 		for clip_filename, _ in regression_clips:
-			cmd = '{} -acl="{}" -test -config="{}"'.format(compressor_exe_path, clip_filename, config_filename)
+			cmd = '"{}" -acl="{}" -test -config="{}"'.format(compressor_exe_path, clip_filename, config_filename)
 			if platform.system() == 'Windows':
 				cmd = cmd.replace('/', '\\')
 
@@ -480,7 +632,7 @@ def do_regression_tests(ctest_exe, test_data_dir, args):
 
 				(clip_filename, cmd) = entry
 
-				result = os.system(cmd)
+				result = subprocess.call(cmd, shell=True)
 
 				if result != 0:
 					failed_queue.put((clip_filename, cmd))
@@ -517,11 +669,19 @@ def do_regression_tests(ctest_exe, test_data_dir, args):
 
 		regression_testing_failed = not failed_queue.empty()
 
-		regression_end_time = time.clock()
+		regression_end_time = time.perf_counter()
 		print('Done in {}'.format(format_elapsed_time(regression_end_time - regression_start_time)))
 
 		if regression_testing_failed:
 			sys.exit(1)
+
+def do_regression_tests(build_dir, ctest_exe, test_data_dir, args):
+	print('Running regression tests ...')
+
+	if args.compiler == 'android':
+		do_regression_tests_android(build_dir, args)
+	else:
+		do_regression_tests_cmake(ctest_exe, test_data_dir, args)
 
 if __name__ == "__main__":
 	args = parse_argv()
@@ -550,8 +710,9 @@ if __name__ == "__main__":
 
 	print('Using config: {}'.format(args.config))
 	print('Using cpu: {}'.format(args.cpu))
-	if not args.compiler == None:
+	if args.compiler:
 		print('Using compiler: {}'.format(args.compiler))
+	print('Using {} threads'.format(args.num_threads))
 
 	regression_data_dir = do_prepare_regression_test_data(test_data_dir, args)
 	decomp_data_dir = do_prepare_decompression_test_data(test_data_dir, args)
@@ -562,9 +723,9 @@ if __name__ == "__main__":
 		do_build(cmake_exe, args)
 
 	if args.unit_test:
-		do_tests(ctest_exe, args)
+		do_tests(build_dir, ctest_exe, args)
 
-	if args.regression_test and not args.compiler == 'android' and not args.compiler == 'ios':
-		do_regression_tests(ctest_exe, test_data_dir, args)
+	if args.regression_test and not args.compiler == 'ios':
+		do_regression_tests(build_dir, ctest_exe, test_data_dir, args)
 
 	sys.exit(0)

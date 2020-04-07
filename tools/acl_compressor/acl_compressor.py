@@ -29,6 +29,7 @@ def parse_argv():
 	options['has_progress_bar'] = True
 	options['stat_detailed'] = False
 	options['stat_exhaustive'] = False
+	options['level'] = 'Medium'
 	options['print_help'] = False
 
 	for i in range(1, len(sys.argv)):
@@ -73,6 +74,9 @@ def parse_argv():
 
 		if value.startswith('-parallel='):
 			options['num_threads'] = int(value[len('-parallel='):].replace('"', ''))
+
+		if value.startswith('-level='):
+			options['level'] = value[len('-level='):].replace('"', '').capitalize()
 
 		if value == '-help':
 			options['print_help'] = True
@@ -160,7 +164,7 @@ def create_csv(options):
 		csv_data['stats_summary_csv_file'] = stats_summary_csv_file
 
 		print('Generating CSV file {} ...'.format(stats_summary_csv_filename))
-		print('Clip Name, Algorithm Name, Raw Size, Compressed Size, Compression Ratio, Compression Time, Clip Duration, Num Animated Tracks, Max Error', file = stats_summary_csv_file)
+		print('Clip Name, Algorithm Name, Raw Size, Compressed Size, Compression Ratio, Compression Time, Clip Duration, Num Animated Tracks, Max Error, Num Transforms, Num Samples Per Track, Quantization Memory Usage', file = stats_summary_csv_file)
 
 	if options['csv_bit_rate']:
 		stats_bit_rate_csv_filename = os.path.join(stat_dir, 'stats_bit_rate.csv')
@@ -207,8 +211,8 @@ def close_csv(csv_data):
 def append_csv(csv_data, job_data):
 	if 'stats_summary_csv_file' in csv_data:
 		data = job_data['stats_summary_data']
-		for (clip_name, algo_name, raw_size, compressed_size, compression_ratio, compression_time, duration, num_animated_tracks, max_error) in data:
-			print('{}, {}, {}, {}, {}, {}, {}, {}, {}'.format(clip_name, algo_name, raw_size, compressed_size, compression_ratio, compression_time, duration, num_animated_tracks, max_error), file = csv_data['stats_summary_csv_file'])
+		for (clip_name, algo_name, raw_size, compressed_size, compression_ratio, compression_time, duration, num_animated_tracks, max_error, num_transforms, num_samples_per_track, quantization_memory_usage) in data:
+			print('{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}'.format(clip_name, algo_name, raw_size, compressed_size, compression_ratio, compression_time, duration, num_animated_tracks, max_error, num_transforms, num_samples_per_track, quantization_memory_usage), file = csv_data['stats_summary_csv_file'])
 
 	if 'stats_animated_size_csv_file' in csv_data:
 		size_data = job_data['stats_animated_size']
@@ -237,8 +241,9 @@ def write_csv(csv_data, agg_data):
 				inv_total_count = 1.0 / total_count
 			print('{}, {}'.format(algo_data['csv_name'], ', '.join([str((float(x) * inv_total_count) * 100.0) for x in algo_data['bit_rates']])), file = csv_data['stats_bit_rate_csv_file'])
 
-def print_progress(iteration, total, prefix='', suffix='', decimals = 1, bar_length = 50):
+def print_progress(iteration, total, prefix='', suffix='', decimals = 1, bar_length = 40):
 	# Taken from https://stackoverflow.com/questions/3173320/text-progress-bar-in-the-console
+	# With minor tweaks
 	"""
 	Call in a loop to create terminal progress bar
 	@params:
@@ -254,16 +259,17 @@ def print_progress(iteration, total, prefix='', suffix='', decimals = 1, bar_len
 	filled_length = int(round(bar_length * iteration / float(total)))
 	bar = '█' * filled_length + '-' * (bar_length - filled_length)
 
-	if platform.system() == 'Darwin':
-		# On OS X, \r doesn't appear to work properly in the terminal
-		print('{}{} |{}| {}{} {}'.format('\b' * 100, prefix, bar, percents, '%', suffix), end='')
-	else:
-		sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percents, '%', suffix)),
+	# We need to clear any previous line we might have to ensure we have no visual artifacts
+	# Note that if this function is called too quickly, the text might flicker
+	terminal_width = 80
+	sys.stdout.write('{}\r'.format(' ' * terminal_width))
+	sys.stdout.flush()
+
+	sys.stdout.write('%s |%s| %s%s %s\r' % (prefix, bar, percents, '%', suffix)),
+	sys.stdout.flush()
 
 	if iteration == total:
-		print('')
-
-	sys.stdout.flush()
+		sys.stdout.write('\n')
 
 def run_acl_compressor(cmd_queue, result_queue):
 	while True:
@@ -324,11 +330,13 @@ def compress_clips(options):
 			if not os.path.exists(stat_dirname):
 				os.makedirs(stat_dirname)
 
+			stat_filename = stat_filename.replace('\\\\?\\', '')
+
+			cmd = '{} -acl="{}" -stats="{}" -level={}'.format(compressor_exe_path, acl_filename, stat_filename, options['level'])
+
 			if out_dir:
 				out_filename = os.path.join(options['out'], filename.replace('.acl.sjson', '.acl.bin'))
-				cmd = '{} -acl="{}" -stats="{}" -out="{}"'.format(compressor_exe_path, acl_filename, stat_filename, out_filename)
-			else:
-				cmd = '{} -acl="{}" -stats="{}"'.format(compressor_exe_path, acl_filename, stat_filename)
+				cmd = '{} -out="{}"'.format(cmd, out_filename)
 
 			if options['stat_detailed']:
 				cmd = '{} -stat_detailed'.format(cmd)
@@ -351,7 +359,7 @@ def compress_clips(options):
 			cmd_queue.put(None)
 
 		result_queue = queue.Queue()
-		compression_start_time = time.clock()
+		compression_start_time = time.perf_counter()
 
 		threads = [ threading.Thread(target = run_acl_compressor, args = (cmd_queue, result_queue)) for _i in range(options['num_threads']) ]
 		for thread in threads:
@@ -379,66 +387,46 @@ def compress_clips(options):
 		except KeyboardInterrupt:
 			sys.exit(1)
 
-		compression_end_time = time.clock()
+		compression_end_time = time.perf_counter()
 		print()
 		print('Compressed {} clips in {}'.format(len(stat_files), format_elapsed_time(compression_end_time - compression_start_time)))
 
 	return stat_files
 
-def shorten_range_reduction(range_reduction):
-	if range_reduction == 'RangeReduction::None':
-		return 'RR:None'
-	elif range_reduction == 'RangeReduction::Rotations':
-		return 'RR:Rot'
-	elif range_reduction == 'RangeReduction::Translations':
-		return 'RR:Trans'
-	elif range_reduction == 'RangeReduction::Scales':
-		return 'RR:Scale'
-	elif range_reduction == 'RangeReduction::Rotations | RangeReduction::Translations':
-		return 'RR:Rot|Trans'
-	elif range_reduction == 'RangeReduction::Rotations | RangeReduction::Scales':
-		return 'RR:Rot|Scale'
-	elif range_reduction == 'RangeReduction::Translations | RangeReduction::Scales':
-		return 'RR:Trans|Scale'
-	elif range_reduction == 'RangeReduction::Rotations | RangeReduction::Translations | RangeReduction::Scales':
-		return 'RR:Rot|Trans|Scale'
-	else:
-		return 'RR:???'
-
 def shorten_rotation_format(format):
-	if format == 'Quat_128':
+	if format == 'quatf_full':
 		return 'R:Quat'
-	elif format == 'QuatDropW_96':
+	elif format == 'quatf_drop_w_full':
 		return 'R:QuatNoW96'
 	elif format == 'QuatDropW_48':
 		return 'R:QuatNoW48'
 	elif format == 'QuatDropW_32':
 		return 'R:QuatNoW32'
-	elif format == 'QuatDropW_Variable':
+	elif format == 'quatf_drop_w_variable':
 		return 'R:QuatNoWVar'
 	else:
 		return 'R:???'
 
 def shorten_translation_format(format):
-	if format == 'Vector3_96':
+	if format == 'vector3f_full':
 		return 'T:Vec3_96'
 	elif format == 'Vector3_48':
 		return 'T:Vec3_48'
 	elif format == 'Vector3_32':
 		return 'T:Vec3_32'
-	elif format == 'Vector3_Variable':
+	elif format == 'vector3f_variable':
 		return 'T:Vec3Var'
 	else:
 		return 'T:???'
 
 def shorten_scale_format(format):
-	if format == 'Vector3_96':
+	if format == 'vector3f_full':
 		return 'S:Vec3_96'
 	elif format == 'Vector3_48':
 		return 'S:Vec3_48'
 	elif format == 'Vector3_32':
 		return 'S:Vec3_32'
-	elif format == 'Vector3_Variable':
+	elif format == 'vector3f_variable':
 		return 'S:Vec3Var'
 	else:
 		return 'S:???'
@@ -510,6 +498,7 @@ def run_stat_parsing(options, stat_queue, result_queue):
 		stats_error_data = []
 		stats_animated_size = []
 		bone_error_values = []
+		compression_times = []
 
 		while True:
 			stat_filename = stat_queue.get()
@@ -525,20 +514,21 @@ def run_stat_parsing(options, stat_queue, result_queue):
 						if len(run_stats) == 0:
 							continue
 
-						run_stats['range_reduction'] = shorten_range_reduction(run_stats['range_reduction'])
 						run_stats['filename'] = stat_filename.replace('\\\\?\\', '')
 						run_stats['clip_name'] = os.path.splitext(os.path.basename(stat_filename))[0]
 						run_stats['rotation_format'] = shorten_rotation_format(run_stats['rotation_format'])
 						run_stats['translation_format'] = shorten_translation_format(run_stats['translation_format'])
 						run_stats['scale_format'] = shorten_scale_format(run_stats['scale_format'])
 
+						if isinstance(run_stats['duration'], str):
+							run_stats['duration'] = 0.0
+
 						if 'segmenting' in run_stats:
-							run_stats['segmenting']['range_reduction'] = shorten_range_reduction(run_stats['segmenting']['range_reduction'])
-							run_stats['desc'] = '{}|{}|{}, Clip {}, Segment {}'.format(run_stats['rotation_format'], run_stats['translation_format'], run_stats['scale_format'], run_stats['range_reduction'], run_stats['segmenting']['range_reduction'])
-							run_stats['csv_desc'] = '{}|{}|{} Clip {} Segment {}'.format(run_stats['rotation_format'], run_stats['translation_format'], run_stats['scale_format'], run_stats['range_reduction'], run_stats['segmenting']['range_reduction'])
+							run_stats['desc'] = '{}|{}|{}'.format(run_stats['rotation_format'], run_stats['translation_format'], run_stats['scale_format'])
+							run_stats['csv_desc'] = '{}|{}|{}'.format(run_stats['rotation_format'], run_stats['translation_format'], run_stats['scale_format'])
 						else:
-							run_stats['desc'] = '{}|{}|{}, Clip {}'.format(run_stats['rotation_format'], run_stats['translation_format'], run_stats['scale_format'], run_stats['range_reduction'])
-							run_stats['csv_desc'] = '{}|{}|{} Clip {}'.format(run_stats['rotation_format'], run_stats['translation_format'], run_stats['scale_format'], run_stats['range_reduction'])
+							run_stats['desc'] = '{}|{}|{}'.format(run_stats['rotation_format'], run_stats['translation_format'], run_stats['scale_format'])
+							run_stats['csv_desc'] = '{}|{}|{}'.format(run_stats['rotation_format'], run_stats['translation_format'], run_stats['scale_format'])
 
 						aggregate_stats(agg_run_stats, run_stats)
 						track_best_runs(best_runs, run_stats)
@@ -546,11 +536,15 @@ def run_stat_parsing(options, stat_queue, result_queue):
 
 						num_runs += 1
 						total_compression_time += run_stats['compression_time']
+						compression_times.append(run_stats['compression_time'])
 
 						if options['csv_summary']:
-							#(name, raw_size, compressed_size, compression_ratio, compression_time, duration, num_animated_tracks, max_error)
+							#(name, raw_size, compressed_size, compression_ratio, compression_time, duration, num_animated_tracks, max_error, num_transforms, num_samples_per_track, quantization_memory_usage)
+							num_transforms = run_stats['num_bones']
+							num_samples_per_track = run_stats['num_samples']
 							num_animated_tracks = run_stats.get('num_animated_tracks', 0)
-							data = (run_stats['clip_name'], run_stats['csv_desc'], run_stats['raw_size'], run_stats['compressed_size'], run_stats['compression_ratio'], run_stats['compression_time'], run_stats['duration'], num_animated_tracks, run_stats['max_error'])
+							quantization_memory_usage = run_stats.get('track_bit_rate_database_size', 0) + run_stats.get('transform_cache_size', 0)
+							data = (run_stats['clip_name'], run_stats['csv_desc'], run_stats['raw_size'], run_stats['compressed_size'], run_stats['compression_ratio'], run_stats['compression_time'], run_stats['duration'], num_animated_tracks, run_stats['max_error'], num_transforms, num_samples_per_track, quantization_memory_usage)
 							stats_summary_data.append(data)
 
 						if 'segments' in run_stats and len(run_stats['segments']) > 0:
@@ -589,6 +583,7 @@ def run_stat_parsing(options, stat_queue, result_queue):
 		results['stats_error_data'] = stats_error_data
 		results['stats_animated_size'] = stats_animated_size
 		results['bone_error_values'] = bone_error_values
+		results['compression_times'] = compression_times
 
 		result_queue.put(('done', results))
 	except KeyboardInterrupt:
@@ -608,8 +603,8 @@ def aggregate_job_stats(agg_job_results, job_results):
 
 	if len(agg_job_results) == 0:
 		# Convert array to numpy array
-		bone_error_values = numpy.array(job_results['bone_error_values'])
-		job_results['bone_error_values'] = bone_error_values
+		job_results['bone_error_values'] = numpy.array(job_results['bone_error_values'])
+		job_results['compression_times'] = numpy.array(job_results['compression_times'])
 
 		agg_job_results.update(job_results)
 	else:
@@ -645,18 +640,23 @@ def aggregate_job_stats(agg_job_results, job_results):
 			agg_job_results['worst_runs']['worst_ratio_entry'] = job_results['worst_runs']['worst_ratio_entry']
 
 		agg_job_results['bone_error_values'] = numpy.append(agg_job_results['bone_error_values'], job_results['bone_error_values'])
+		agg_job_results['compression_times'] = numpy.append(agg_job_results['compression_times'], job_results['compression_times'])
 
 def percentile_rank(values, value):
 	return (values < value).mean() * 100.0
 
 if __name__ == "__main__":
+	if sys.version_info < (3, 4):
+		print('Python 3.4 or higher needed to run this script')
+		sys.exit(1)
+
 	options = parse_argv()
 
 	stat_files = compress_clips(options)
 
 	csv_data = create_csv(options)
 
-	aggregating_start_time = time.clock()
+	aggregating_start_time = time.perf_counter()
 
 	stat_queue = multiprocessing.Queue()
 	for stat_filename in stat_files:
@@ -702,11 +702,10 @@ if __name__ == "__main__":
 	best_runs = agg_job_results['best_runs']
 	worst_runs = agg_job_results['worst_runs']
 	num_runs = agg_job_results['num_runs']
-	total_wall_compression_time = agg_job_results['total_compression_time']
 
 	write_csv(csv_data, agg_run_stats)
 
-	aggregating_end_time = time.clock()
+	aggregating_end_time = time.perf_counter()
 	print()
 	print('Found {} runs in {}'.format(num_runs, format_elapsed_time(aggregating_end_time - aggregating_start_time)))
 	print()
@@ -731,9 +730,10 @@ if __name__ == "__main__":
 	total_duration = sum([x['total_duration'] for x in agg_run_stats.values()])
 
 	print('Sum of clip durations: {}'.format(format_elapsed_time(total_duration)))
-	print('Total compression time: {}'.format(format_elapsed_time(total_wall_compression_time)))
+	print('Total compression time: {} ({:.3f} seconds)'.format(format_elapsed_time(total_compression_time), total_compression_time))
 	print('Total raw size: {:.2f} MB'.format(bytes_to_mb(total_raw_size)))
 	print('Compression speed: {:.2f} KB/sec'.format(bytes_to_kb(total_raw_size) / total_compression_time))
+	print('Compression time 50, 85, 99th percentile: {:.3f}, {:.3f}, {:.3f} seconds'.format(numpy.percentile(agg_job_results['compression_times'], 50.0), numpy.percentile(agg_job_results['compression_times'], 85.0), numpy.percentile(agg_job_results['compression_times'], 99.0)))
 	if len(agg_job_results['bone_error_values']) > 0:
 		print('Bone error 99th percentile: {:.4f}'.format(numpy.percentile(agg_job_results['bone_error_values'], 99.0)))
 		print('Error threshold percentile rank: {:.2f} (0.01)'.format(percentile_rank(agg_job_results['bone_error_values'], 0.01)))

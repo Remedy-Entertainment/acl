@@ -16,8 +16,12 @@ set(MACOSX_BUNDLE_GUI_IDENTIFIER "com.acl.acl-compressor")
 set(MACOSX_BUNDLE_BUNDLE_NAME "acl-compressor")
 
 include_directories("${PROJECT_SOURCE_DIR}/../../../includes")
-include_directories("${PROJECT_SOURCE_DIR}/../../../external/sjson-cpp/includes")
+include_directories("${PROJECT_SOURCE_DIR}/../../../external/rtm/includes")
 include_directories("${PROJECT_SOURCE_DIR}/../includes")
+
+if(USE_SJSON)
+	include_directories("${PROJECT_SOURCE_DIR}/../../../external/sjson-cpp/includes")
+endif()
 
 # Grab all of our common source files
 file(GLOB_RECURSE ALL_COMMON_SOURCE_FILES LIST_DIRECTORIES false
@@ -36,5 +40,10 @@ add_executable(${PROJECT_NAME} MACOSX_BUNDLE ${ALL_COMMON_SOURCE_FILES} ${ALL_MA
 
 # Disable SIMD if not needed
 if(NOT USE_SIMD_INSTRUCTIONS)
-	add_definitions(-DACL_NO_INTRINSICS)
+	add_definitions(-DRTM_NO_INTRINSICS)
+endif()
+
+# Enable SJSON when needed
+if(USE_SJSON)
+	add_definitions(-DACL_USE_SJSON)
 endif()

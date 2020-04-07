@@ -24,7 +24,10 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/core/impl/compiler_utils.h"
 #include <acl/core/iallocator.h>
+
+ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
@@ -33,8 +36,12 @@ namespace acl
 	{
 	public:
 		Deleter() : m_allocator(nullptr) {}
-		Deleter(IAllocator& allocator) : m_allocator(&allocator) {}
-		Deleter(const Deleter& deleter) : m_allocator(deleter.m_allocator) {}
+		explicit Deleter(IAllocator& allocator) : m_allocator(&allocator) {}
+		Deleter(const Deleter&) = default;
+		Deleter(Deleter&&) = default;
+		~Deleter() = default;
+		Deleter& operator=(const Deleter&) = default;
+		Deleter& operator=(Deleter&&) = default;
 
 		void operator()(AllocatedType* ptr)
 		{
@@ -67,3 +74,5 @@ namespace acl
 			Deleter<AllocatedType>(allocator));
 	}
 }
+
+ACL_IMPL_FILE_PRAGMA_POP

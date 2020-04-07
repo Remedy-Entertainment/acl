@@ -24,8 +24,12 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/core/impl/compiler_utils.h"
+
 #include <chrono>
 #include <cstdint>
+
+ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
@@ -41,7 +45,7 @@ namespace acl
 
 		////////////////////////////////////////////////////////////////////////////////
 		// Destroys a scope profiler and automatically stops it.
-		~ScopeProfiler();
+		~ScopeProfiler() = default;
 
 		////////////////////////////////////////////////////////////////////////////////
 		// Manually stops the profiler.
@@ -81,15 +85,11 @@ namespace acl
 		m_start_time = m_end_time = std::chrono::high_resolution_clock::now();
 	}
 
-	inline ScopeProfiler::~ScopeProfiler()
-	{
-		// Nothing to do, really
-		//stop();
-	}
-
 	inline void ScopeProfiler::stop()
 	{
 		if (m_start_time == m_end_time)
 			m_end_time = std::chrono::high_resolution_clock::now();
 	}
 }
+
+ACL_IMPL_FILE_PRAGMA_POP

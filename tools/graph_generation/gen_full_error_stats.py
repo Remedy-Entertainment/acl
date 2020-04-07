@@ -15,6 +15,10 @@ def format_elapsed_time(elapsed_time):
 	return '{:0>2}h {:0>2}m {:05.2f}s'.format(int(hours), int(minutes), seconds)
 
 if __name__ == "__main__":
+	if sys.version_info < (3, 4):
+		print('Python 3.4 or higher needed to run this script')
+		sys.exit(1)
+
 	if len(sys.argv) != 2:
 		print('Usage: python gen_full_error_stats.py <path/to/input_file.sjson>')
 		sys.exit(1)
@@ -46,9 +50,9 @@ if __name__ == "__main__":
 
 	for entry in input_sjson_data['inputs']:
 		print('Parsing {} ...'.format(entry['header']))
-		parsing_start_time = time.clock();
+		parsing_start_time = time.perf_counter();
 		csv_data = numpy.loadtxt(entry['file'], delimiter=',', dtype=input_data_type_def, skiprows=1, usecols=columns_to_extract)
-		parsing_end_time = time.clock();
+		parsing_end_time = time.perf_counter();
 		print('Parsed {} ({}) rows in {}'.format(entry['header'], len(csv_data['errors']), format_elapsed_time(parsing_end_time - parsing_start_time)))
 
 		percentiles = numpy.percentile(csv_data['errors'], desired_percentiles)
